@@ -12,7 +12,7 @@
 
 // #define TFT_BACKGND TFT_BLACK
 #define TFT_BACKGND TFT_BLACK
-#define sw_version  "v0.1"
+#define sw_version  "v0.2"
 #define LED_COUNT   16
 #define LED_PIN     27
 
@@ -95,7 +95,8 @@ uint16_t hsv_col = 0;
 uint16_t co2_level = 0;
 float temperature = 0.0;
 float humidity = 0.0;
-uint32_t led_colour = 0;
+uint32_t co2_led_colour = 0;
+int32_t co2_lcd_colour = 0;
 uint8_t num_leds_lit = 0;
 uint8_t led_brightness_pc = 50;  // In percent
 uint8_t lcd_brightness_pc = 50;  // In percent
@@ -104,7 +105,6 @@ char txt[50] = "";
 #define RECT_WIDTH  165
 #define RECT_LEFT_X ((lcd.width() - RECT_WIDTH) / 2)
 
-// TODO Change text colour of CO2 value to match LED colour
 // TODO Remove delay(500) replace with non-blocking tine schedule
 // TODO Use button to swap to history bargraph. History of max value and ave values reached for last 12 hours (swtich between max and ave with button)
 // TODO Remove title bar AND software version, show as splash screen on reboot
@@ -116,6 +116,11 @@ char txt[50] = "";
 // TODO   - show FRC calibration value
 // TODO   - Set screen rotation left/right
 
+/*
+-----------------
+  setup()
+-----------------
+*/
 void setup(void) {
   strip.begin();  // Start the RGBW LED ring
   strip.setBrightness((led_brightness_pc * 255) / 100);
@@ -155,32 +160,105 @@ void setup(void) {
   delay(2000);
   lcd.clear();
 
-  // Draw divider lines at bottom of LCD
-  #define DIV_LINE_Y 29
+// Draw divider lines at bottom of LCD
+#define DIV_LINE_Y 29
   lcd.drawRect(0, lcd.height() - DIV_LINE_Y - 32, lcd.width() - 50, 33, TFT_DARKGREY);
   lcd.drawRect(0, lcd.height() - DIV_LINE_Y, lcd.width(), DIV_LINE_Y, TFT_DARKGREY);
   lcd.drawFastVLine(lcd.width() / 2, lcd.height() - DIV_LINE_Y, DIV_LINE_Y, TFT_DARKGREY);
 }
 
+/*
+-----------------
+  loop()
+-----------------
+*/
 void loop(void) {
-  // Read CO2 sensor
+  // Check if CO2 data is available
   if (airSensor.dataAvailable()) {
+    // Read CO2 sensor
     co2_level = airSensor.getCO2();
     temperature = airSensor.getTemperature();
     humidity = airSensor.getHumidity();
 
-    /*
-    // Display CO2
-    */
+    // Set the RGB LEDs based on CO2 level from https://www.kane.co.uk/knowledge-centre/what-are-safe-levels-of-co-and-co2-in-rooms
+    // Assume indoor CO2 levels
+    switch (co2_level) {
+      case 0 ... 1000:
+        // CO2 400 - 1000: OK good air exchange
+        strcpy(txt, "Good air quality");
+        num_leds_lit = 4;
+        co2_led_colour = strip.Color(0, 255, 0);  // GREEN
+        co2_lcd_colour = TFT_GREEN;
+        led_brightness_pc = 10;  // LED right brightness %
+        lcd_brightness_pc = 35;  // LCD brightness %
+        break;
+
+      case 1001 ... 2000:
+        // CO2 1000 - 2000: Drowsy and poor air
+        strcpy(txt, "Drowsy, poor air");
+        num_leds_lit = 8;
+        co2_led_colour = strip.Color(255, 128, 0);  // ORANGE
+        co2_lcd_colour = TFT_YELLOW;
+        led_brightness_pc = 30;
+        lcd_brightness_pc = 60;
+        break;
+
+      case 2001 ... 5000:
+        //    Headaches, sleepiness and stagnant, stale, stuffy air.
+        //    Poor concentration, loss of attention, increased heart rate and slight nausea may be present.
+        strcpy(txt, "Headache sleepy");
+        num_leds_lit = 12;
+        co2_led_colour = strip.Color(255, 64, 0);  // DARK ORANGE
+        co2_lcd_colour = TFT_ORANGE;
+        led_brightness_pc = 50;
+        lcd_brightness_pc = 75;
+        break;
+
+      case 5001 ... 65535:
+        //    Workplace 8-hr exposure limit
+        strcpy(txt, "8hr exposure limit");
+        num_leds_lit = 16;
+        co2_led_colour = strip.Color(255, 0, 0);  // RED
+        co2_lcd_colour = TFT_RED;
+        led_brightness_pc = 70;
+        lcd_brightness_pc = 100;
+        break;
+
+      default:
+        // PINK indicates an error
+        strcpy(txt, "CO2 val error");
+        num_leds_lit = 1;
+        co2_led_colour = strip.Color(255, 0, 255);
+        co2_lcd_colour = TFT_PINK;
+        led_brightness_pc = 80;
+        lcd_brightness_pc = 20;
+        break;
+    }
+
+    // Set the Neopixel LED colour based on CO2 value
+    strip.clear();
+    strip.setBrightness((led_brightness_pc * 255) / 100);
+    strip.fill(co2_led_colour, LED_COUNT - num_leds_lit, num_leds_lit);
+    strip.show();
+    lcd.setBrightness((lcd_brightness_pc * 255) / 100);
+
+    // Display CO2 effect on humans on LCD
+    int32_t ppm_y = lcd.height() - 33;
+    lcd.setFont(&fonts::FreeSans12pt7b);
+    lcd.setTextDatum(bottom_left);
+    lcd.setTextPadding(185);
+    lcd.setTextColor(TFT_MAGENTA, TFT_BACKGND);
+    lcd.drawString(txt, 4, ppm_y);
+
+    // Display CO2 value on LCD
     lcd.setTextDatum(top_right);
     lcd.setFont(&DSEG7_Modern_Bold_60);
-    lcd.setTextColor(TFT_GREEN, TFT_BACKGND);
+    lcd.setTextColor(co2_lcd_colour, TFT_BACKGND);
     sprintf(txt, "%d", co2_level);
     lcd.setTextPadding(lcd.width());
     lcd.drawString(txt, lcd.width(), 7);
 
-    // Display "ppm"
-    int32_t ppm_y = lcd.height() - 33;
+    // Display "ppm" on LCD
     lcd.setFont(&fonts::FreeSans12pt7b);
     lcd.setTextDatum(bottom_right);
     lcd.setTextPadding(0);
@@ -191,9 +269,7 @@ void loop(void) {
     lcd.setFont(&fonts::FreeSans12pt7b);
     lcd.setTextPadding(90);
 
-    /*
-    // Display temperature
-    */
+    // Display temperature on LCD
     uint32_t txt_x = 20;
     uint32_t txt_y = lcd.height() - 1;
     lcd.setTextDatum(bottom_left);
@@ -202,76 +278,12 @@ void loop(void) {
     lcd.drawString(txt, txt_x, txt_y);
     lcd.drawCircle(txt_x + 55, txt_y - 20, 4, TFT_LIGHTGRAY);  // Degree symbol
 
-    /*
-    // Display humidity
-    */
+    // Display humidity on LCD
     txt_x = lcd.width() - 15;
     lcd.setTextDatum(bottom_right);
     lcd.setTextColor(TFT_LIGHTGRAY, TFT_BACKGND);
     sprintf(txt, "%3.0f%% RH", humidity);
     lcd.drawString(txt, txt_x, txt_y);
-
-    // Set the RGB LEDs based on CO2 level from https://www.kane.co.uk/knowledge-centre/what-are-safe-levels-of-co-and-co2-in-rooms
-    // Assume indoor CO2 levels
-    switch (co2_level) {
-      case 0 ... 1000:
-        // CO2 400 - 1000: OK good air exchange
-        strcpy(txt, "Good air quality");
-        num_leds_lit = 4;
-        led_colour = strip.Color(0, 255, 0);  // GREEN
-        led_brightness_pc = 10;               // LED right brightness %
-        lcd_brightness_pc = 35;               // LCD brightness %
-        break;
-
-      case 1001 ... 2000:
-        // CO2 1000 - 2000: Drowsy and poor air
-        strcpy(txt, "Drowsy, poor air");
-        num_leds_lit = 8;
-        led_colour = strip.Color(255, 128, 0);  // ORANGE
-        led_brightness_pc = 30;
-        lcd_brightness_pc = 60;
-        break;
-
-      case 2001 ... 5000:
-        //    Headaches, sleepiness and stagnant, stale, stuffy air.
-        //    Poor concentration, loss of attention, increased heart rate and slight nausea may be present.
-        strcpy(txt, "Headache sleepy");
-        num_leds_lit = 12;
-        led_colour = strip.Color(255, 64, 0);  // DARK ORANGE
-        led_brightness_pc = 50;
-        lcd_brightness_pc = 75;
-        break;
-
-      case 5001 ... 65535:
-        //    Workplace 8-hr exposure limit
-        strcpy(txt, "8hr exposure limit");
-        num_leds_lit = 16;
-        led_colour = strip.Color(255, 0, 0);  // RED
-        led_brightness_pc = 70;
-        lcd_brightness_pc = 100;
-        break;
-
-      default:
-        // PINK indicates an error
-        strcpy(txt, "CO2 val error");
-        num_leds_lit = 1;
-        led_colour = strip.Color(255, 0, 255);
-        led_brightness_pc = 80;
-        lcd_brightness_pc = 20;
-        break;
-    }
-    strip.clear();
-    strip.setBrightness((led_brightness_pc * 255) / 100);
-    strip.fill(led_colour, LED_COUNT - num_leds_lit, num_leds_lit);
-    strip.show();
-    lcd.setBrightness((lcd_brightness_pc * 255) / 100);
-
-    // Display CO2 effect on humans
-    lcd.setFont(&fonts::FreeSans12pt7b);
-    lcd.setTextDatum(bottom_left);
-    lcd.setTextPadding(185);
-    lcd.setTextColor(TFT_MAGENTA, TFT_BACKGND);
-    lcd.drawString(txt, 4, ppm_y);
   }
   delay(500);
 }
